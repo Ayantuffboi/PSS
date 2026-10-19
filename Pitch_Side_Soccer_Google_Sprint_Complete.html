@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pitch Side Soccer</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<style>
+:root{--bg:#e7eee3;--fg:#13261a;--card:#fbfdf9;--line:#c5d2bf;--btn:#13261a;--btnfg:#fbfdf9;--acc:#2f8f4a;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0c130e;--fg:#e4eedf;--card:#16211a;--line:#2a3b2f;--btn:#ffd23f;--btnfg:#1a1a0c}}
+:root[data-theme="dark"]{--bg:#0c130e;--fg:#e4eedf;--card:#16211a;--line:#2a3b2f;--btn:#ffd23f;--btnfg:#1a1a0c}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{background:var(--bg);color:var(--fg);font-family:"Barlow Condensed",Impact,"Arial Narrow",sans-serif;font-size:20px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:10px;min-height:100vh;user-select:none;-webkit-user-select:none}
+h1{margin:0;font-size:clamp(34px,7vw,56px);font-weight:800;line-height:1}
+h2{margin:0;font-size:30px;font-weight:800}
+.view{width:100%;max-width:900px;display:flex;flex-direction:column;align-items:center;gap:12px}
+.card{max-width:460px;background:var(--card);border:2px solid var(--line);border-radius:14px;padding:20px}
+label{display:flex;flex-direction:column;gap:4px;width:100%;font-weight:600}
+input[type=text],input[type=password]{font:inherit;padding:8px 10px;border-radius:8px;border:2px solid var(--line);background:var(--bg);color:var(--fg);width:100%;user-select:text}
+input:focus-visible,button:focus-visible,.btn2:focus-within{outline:3px solid var(--acc);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center;width:100%}
+button,.btn2{font:inherit;font-weight:800;border:0;border-radius:10px;padding:9px 22px;cursor:pointer;background:var(--btn);color:var(--btnfg);text-align:center}
+.btn2{background:transparent;color:var(--fg);border:2px solid var(--line);padding:7px 16px;font-size:18px}
+.sw{width:30px;height:30px;border-radius:50%;padding:0;border:3px solid var(--card);box-shadow:0 0 0 2px var(--line)}
+.sw.on{box-shadow:0 0 0 3px var(--fg)}
+#pv{width:96px;height:96px;border-radius:12px;background:#379c52}
+#sl{width:100%;display:flex;flex-direction:column;gap:8px}
+.menu{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;width:100%}
+.pane{flex:1 1 300px;display:flex;flex-direction:column;gap:12px;align-items:center}
+.srv{display:flex;align-items:center;gap:10px;background:var(--card);border:2px solid var(--line);border-radius:10px;padding:8px 12px}
+.srv b{flex:1;text-align:left;font-size:22px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.muted{opacity:.7;font-weight:600}
+#hud{display:flex;align-items:center;justify-content:center;gap:18px;font-weight:800;font-size:clamp(24px,5vw,40px);width:100%}
+#hud .t{display:flex;align-items:center;gap:10px}
+#hud .dot{width:.7em;height:.7em;border-radius:50%}
+#clock{font-weight:600;min-width:3.2ch;text-align:center;padding:2px 12px;border:2px solid var(--line);border-radius:999px;background:var(--card);font-size:.8em}
+#wrap{position:relative;width:100%;aspect-ratio:900/540;border-radius:14px;overflow:hidden;border:2px solid var(--line);touch-action:none}
+canvas#c{width:100%;height:100%;display:block}
+#ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(8,18,11,.62);color:#fff;text-align:center;padding:16px}
+#ov h1{font-size:clamp(30px,7vw,64px)}
+#ov p{margin:0;font-size:clamp(16px,2.6vw,22px);font-weight:600;max-width:40ch}
+#ov button,#kick{background:#ffd23f;color:#1a1a0c;font-size:24px}
+#kick{position:absolute;right:14px;bottom:14px;width:84px;height:84px;border-radius:50%;padding:0;opacity:.85}
+#sprint{position:absolute;right:14px;bottom:108px;width:84px;height:64px;border-radius:18px;padding:0;opacity:.9;background:#fff;color:#13261a;font-size:20px}
+#authbar{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap}
+#authstatus{font-size:16px;text-align:center;opacity:.8}
+#hint{font-size:16px;font-weight:600;opacity:.75;text-align:center}
+#msg{min-height:1.3em;font-size:17px;font-weight:600;color:#c0392b;text-align:center}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+
+<section class="view" id="v-menu">
+  <h1>Pitch Side Soccer</h1>
+  <div class="menu">
+    <div class="card pane">
+      <h2>Your player</h2>
+      <div id="authbar" class="row">
+        <button id="google-login" type="button">Sign in with Google</button>
+        <button id="google-logout" class="btn2 hide" type="button">Sign out</button>
+      </div>
+      <div id="authstatus" class="muted">Sign in with Google to use online servers.</div>
+      <label>Username<input type="text" id="un" maxlength="16" placeholder="Pick a name" autocomplete="off"></label>
+      <div class="row" id="sw"></div>
+      <div class="row">
+        <canvas id="pv" width="96" height="96"></canvas>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button class="btn2" id="up" type="button">Upload player model</button>
+          <input type="file" id="file" accept="image/*" hidden>
+          <button class="btn2" id="clr" type="button">Remove model</button>
+        </div>
+      </div>
+      <div id="pmsg" class="muted" style="min-height:1.2em;font-size:17px;text-align:center"></div>
+    </div>
+    <div class="card pane">
+      <h2>Play</h2>
+      <button id="m-solo" style="width:100%">Play vs CPU</button>
+      <button id="m-local" style="width:100%">Local 2 players</button>
+      <button id="m-online" style="width:100%">Online servers</button>
+      <div class="muted" style="font-size:16px;text-align:center">Your name, colour and model are shown to everyone in online matches.</div>
+    </div>
+  </div>
+</section>
+
+<section class="view hide" id="v-servers">
+  <h2>Online servers</h2>
+  <div id="sl"></div>
+  <div class="card" style="width:100%;display:flex;flex-direction:column;gap:10px;max-width:none">
+    <label>Server name<input type="text" id="sn" maxlength="24" placeholder="My server" autocomplete="off"></label>
+    <label>Password (leave empty for a public server)<input type="password" id="sp" maxlength="32" autocomplete="new-password"></label>
+    <button id="mk">Create server</button>
+  </div>
+  <div id="msg"></div>
+  <button class="btn2" id="sb">Back</button>
+</section>
+
+<section class="view hide" id="v-game">
+  <div id="hud">
+    <div class="t"><span class="dot" style="background:#ffd23f"></span><span id="l0">Yellow</span> <span id="s0">0</span></div>
+    <div id="clock">1:30</div>
+    <div class="t"><span id="s1">0</span> <span id="l1">Blue</span><span class="dot" style="background:#2f6bff"></span></div>
+  </div>
+  <div id="wrap">
+    <canvas id="c" width="900" height="540"></canvas>
+    <button id="kick" class="hide" aria-label="Kick">Kick</button>
+    <button id="sprint" class="hide" aria-label="Sprint">Sprint</button>
+    <div id="ov"><h1 id="ovh"></h1><p id="ovp"></p><button id="go">Kick off</button></div>
+  </div>
+  <div id="hint"></div>
+  <button class="btn2" id="leave">Leave match</button>
+</section>
+
+<script>
+const $=id=>document.getElementById(id);
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const W=900,H=540,L=40,R=860,T=30,B=510,G1=225,G2=315,PR=14,BR=8;
+const cv=$('c'),ctx=cv.getContext('2d');
+let room=null,db=null,user=null,uid=null,activeRoom=null,srvId=null,googleUser=null;
+let prof={name:'',color:'#ffd23f',skin:''};
+let mode='solo',state='menu',pause=0,score=[0,0],time=90,lastW=0,tick=0;
+let ball,players,slotPeer=['','','','','',''],cs=null,disp=null,dball=null,curM=-1,hostMiss=0;
+let keys={},joy={x:0,y:0},kickBtn=false,sprintBtn=false,unSrv=null,srvDocs=[],pendingSrv=null,hb=null,sentIn='';
+
+/* ---------- helpers ---------- */
+function show(id){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('hide',v.id!=id))}
+async function sha(s){try{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}catch(e){let h=5381;for(const c of s)h=(h*33^c.charCodeAt(0))>>>0;return h.toString(16).padStart(8,'0').repeat(5)}}
+const rid=()=>Array.from({length:8},()=>'abcdefghjkmnpqrstuvwxyz23456789'[Math.random()*31|0]).join('');
+const imgs={};function getImg(s){if(!s)return null;let i=imgs[s];if(!i){i=imgs[s]=new Image();i.src=s}return i.complete&&i.naturalWidth?i:null}
+
+/* ---------- boot + profile ---------- */
+// Firebase setup: replace these placeholder values with your Firebase web-app config.
+const firebaseConfig = {
+  apiKey: "AIzaSyCiflfq8u-6p4K7dLlITGImqk5R1kobBvE",
+  authDomain: "pitchsidesoccer.firebaseapp.com",
+  projectId: "pitchsidesoccer",
+  appId: "1:54017233577:web:b9cc7c744b76af14da0fb8"
+};
+let auth=null;
+function updateAuthUI(){
+  const signed=!!googleUser;
+  $('google-login').classList.toggle('hide',signed);
+  $('google-logout').classList.toggle('hide',!signed);
+  $('authstatus').textContent=signed
+    ? 'Signed in as '+(googleUser.displayName||googleUser.email||'Google user')
+    : 'Sign in with Google to use online servers.';
+}
+async function boot(){
+  try{
+    if(window.firebase && firebaseConfig.apiKey!=='YOUR_API_KEY'){
+      if(!firebase.apps.length)firebase.initializeApp(firebaseConfig);
+      auth=firebase.auth();
+      auth.onAuthStateChanged(u=>{
+        googleUser=u;user=u;uid=u?u.uid:null;
+        if(u && !prof.name)prof.name=(u.displayName||'Player').slice(0,16);
+        $('un').value=prof.name;updateAuthUI();preview();
+      });
+    }else{
+      $('authstatus').textContent='Setup needed: add your Firebase config in the code.';
+    }
+  }catch(e){$('authstatus').textContent='Google sign-in could not start. Check Firebase setup.'}
+  try{const j=localStorage.getItem('psprof');if(j&&!prof.name)Object.assign(prof,JSON.parse(j))}catch(e){}
+  if($('un').value)prof.name=$('un').value.slice(0,16);
+  $('un').value=prof.name;preview();updateAuthUI();
+}
+$('google-login').onclick=async()=>{
+  if(!auth){$('authstatus').textContent='Add your Firebase config first, then enable Google in Firebase Authentication.';return}
+  try{await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider())}
+  catch(e){$('authstatus').textContent='Google sign-in failed: '+(e.message||'Please try again.')}
+};
+$('google-logout').onclick=async()=>{if(auth)try{await auth.signOut()}catch(e){}};
+
+async function saveProf(){
+  try{if(db&&uid)await db.doc('data/users/'+uid+'/profile').set(prof)}catch(e){}
+  try{localStorage.setItem('psprof',JSON.stringify(prof))}catch(e){}
+}
+const COLORS=['#ffd23f','#2f6bff','#ff5a5f','#2ec4b6','#ff9f1c','#9b5de5','#f15bb5','#ffffff'];
+COLORS.forEach(c=>{const b=document.createElement('button');b.className='sw';b.style.background=c;b.setAttribute('aria-label','Colour '+c);b.onclick=()=>{prof.color=c;preview();persist()};$('sw').appendChild(b)});
+function preview(){
+  const c=$('pv').getContext('2d');c.clearRect(0,0,96,96);c.fillStyle='#379c52';c.fillRect(0,0,96,96);
+  drawPlayer(c,48,52,1,0,0,'o',{n:$('un').value||'You',c:prof.color,s:prof.skin},false,2.4);
+  [...$('sw').children].forEach((b,i)=>b.classList.toggle('on',COLORS[i]==prof.color));
+}
+let pt=null;function persist(){clearTimeout(pt);pt=setTimeout(()=>{saveProf()},400)}
+function commitName(){prof.name=($('un').value||'').trim().slice(0,16)||prof.name||'Player'+(Math.random()*90+10|0);$('un').value=prof.name}
+$('un').oninput=()=>{prof.name=$('un').value.slice(0,16);preview();persist()};
+function loadSkin(f){
+  const pm=$('pmsg');pm.textContent='';
+  if(!f||!/^image\//.test(f.type)){pm.textContent='Choose an image file (PNG, JPG, GIF or WebP).';return}
+  const fr=new FileReader();
+  fr.onerror=()=>{pm.textContent='Could not read that file.'};
+  fr.onload=()=>{const im=new Image();
+    im.onerror=()=>{pm.textContent='Could not open that image.'};
+    im.onload=()=>{try{const c=document.createElement('canvas');c.width=c.height=32;const x=c.getContext('2d'),m=Math.min(im.width,im.height);
+      x.fillStyle='#fff';x.fillRect(0,0,32,32);x.drawImage(im,(im.width-m)/2,(im.height-m)/2,m,m,0,0,32,32);
+      prof.skin=c.toDataURL('image/jpeg',.6);preview();persist();pm.textContent='Player model updated.'}catch(e){pm.textContent='Could not process that image.'}};
+    im.src=fr.result};
+  fr.readAsDataURL(f);
+}
+$('up').onclick=()=>$('file').click();
+$('file').onchange=e=>{loadSkin(e.target.files[0]);e.target.value=''};
+['dragover','drop'].forEach(t=>$('pv').addEventListener(t,e=>{e.preventDefault();if(t=='drop')loadSkin(e.dataTransfer.files[0])}));
+$('clr').onclick=()=>{prof.skin='';preview();persist();$('pmsg').textContent='Model removed.'};
+
+/* ---------- servers ---------- */
+function requireGoogleLogin(){
+  if(googleUser)return true;
+  alert(auth ? 'Please sign in with Google before playing.' : 'Google login is not configured yet. Finish the Firebase setup first.');
+  return false;
+}
+$('m-solo').onclick=()=>{if(!requireGoogleLogin())return;commitName();saveProf();startGame('solo')};
+$('m-local').onclick=()=>{if(!requireGoogleLogin())return;commitName();saveProf();startGame('local')};
+$('m-online').onclick=()=>{if(!requireGoogleLogin())return;commitName();saveProf();openServers()};
+$('sb').onclick=()=>{if(unSrv){unSrv();unSrv=null}show('v-menu')};
+function msg(t){$('msg').textContent=t||''}
+function openServers(){
+  show('v-servers');msg(googleUser?'Online server backend is not configured in this standalone HTML.':'Sign in with Google first to use online servers.');
+  if(!googleUser||!db)return;
+  if(unSrv)unSrv();
+  unSrv=db.collection('servers').onSnapshot(s=>{srvDocs=s.docs.map(d=>({id:d.id,...d.data()}));renderSrv()},e=>msg('Could not load servers.'));
+}
+setInterval(()=>{if(!$('v-servers').classList.contains('hide')&&!pendingSrv)renderSrv()},10000);
+function renderSrv(){
+  const keep=$('jp')?$('jp').value:'';const sl=$('sl');sl.textContent='';const live=srvDocs.filter(s=>Date.now()-(s.seen||0)<90000);
+  if(!live.length){const p=document.createElement('div');p.className='muted';p.style.textAlign='center';p.textContent='No servers yet. Create the first one below.';sl.appendChild(p)}
+  for(const s of live){
+    const r=document.createElement('div');r.className='srv';
+    const n=document.createElement('b');n.textContent=s.name||'Server';
+    const m=document.createElement('span');m.className='muted';m.textContent=(s.lock?'Locked · ':'')+(s.n||1)+'/4';
+    const j=document.createElement('button');j.textContent='Join';j.onclick=()=>joinSrv(s);
+    r.append(n,m,j);sl.appendChild(r);
+    if(pendingSrv==s.id){const f=document.createElement('div');f.className='row';f.style.flex='1 0 100%';
+      const i=document.createElement('input');i.type='password';i.placeholder='Server password';i.id='jp';i.style.flex='1';i.value=keep;
+      const g=document.createElement('button');g.textContent='Enter';g.onclick=()=>joinSrv(s,i.value);
+      i.onkeydown=e=>{if(e.key=='Enter')g.click()};f.append(i,g);r.style.flexWrap='wrap';r.appendChild(f);setTimeout(()=>i.focus(),0)}
+  }
+}
+async function joinSrv(s,pw){
+  commitName();msg('');
+  if(!googleUser){msg('Sign in with Google before joining online servers.');return}
+  if(!room){msg('Online room backend is not configured in this standalone HTML.');return}
+  if(s.lock&&pw===undefined){pendingSrv=s.id;renderSrv();return}
+  const rk=s.lock?'g'+(await sha('r:'+s.id+':'+pw)).slice(0,40):'g'+s.id;
+  if(s.lock&&(await sha('v:'+s.id+':'+pw))!==s.v){msg('Wrong password.');return}
+  pendingSrv=null;enterRoom(rk,false,s);
+}
+$('mk').onclick=async()=>{
+  commitName();msg('');if(!googleUser){msg('Sign in with Google before creating a server.');return}if(!room||!db){msg('Online room backend is not configured in this standalone HTML.');return}
+  const name=($('sn').value||'').trim()||prof.name+"’s server",pw=$('sp').value,id=rid();
+  const rk=pw?'g'+(await sha('r:'+id+':'+pw)).slice(0,40):'g'+id;
+  try{await db.doc('servers/'+id).set({name,lock:!!pw,v:pw?await sha('v:'+id+':'+pw):'',host:uid||'',seen:Date.now(),n:1})}
+  catch(e){msg('You need Contributor access to create servers.');return}
+  $('sp').value='';enterRoom(rk,true,{id,name});
+};
+async function enterRoom(rk,isHost,s){
+  msg('Joining…');
+  try{
+    activeRoom=await room.join(rk);srvId=s.id;
+    await activeRoom.presence({n:prof.name,c:prof.color,s:prof.skin,host:isHost?1:0,ix:0,iy:0,k:0});
+  }catch(e){activeRoom=null;msg('Could not join: '+((e&&(e.code||e.message))||'unknown error')+'. Try again.');return}
+  msg('');
+  if(unSrv){unSrv();unSrv=null}
+  if(!isHost)activeRoom.on('st',m=>{const p=activeRoom.peers().find(q=>q.peer==m.peer);if(p&&p.presence.host&&m.data)applySt(m.data)});
+  slotPeer=['','','','','',''];cs=null;disp=null;curM=-1;hostMiss=0;
+  startGame(isHost?'host':'client',s.name);
+  if(isHost)hb=setInterval(async()=>{try{await db.doc('servers/'+srvId).update({seen:Date.now(),n:Math.min(4,slotPeer.filter(Boolean).length||1)})}catch(e){}},25000);
+}
+async function leave(){
+  clearInterval(hb);hb=null;
+  if(mode=='host'&&db&&srvId){try{await db.doc('servers/'+srvId).delete()}catch(e){}}
+  if(activeRoom){try{await activeRoom.leave()}catch(e){}activeRoom=null}
+  state='menu';show('v-menu');
+}
+$('leave').onclick=leave;
+
+/* ---------- game setup ---------- */
+function mk(team,role,x,y){return{team,role,x,y,hx:x,hy:y,vx:0,vy:0,fx:team?-1:1,fy:0,cd:0}}
+function reset(){
+  ball={x:W/2,y:H/2,vx:0,vy:0};
+  players=[mk(0,'gk',L+24,H/2),mk(0,'o',330,H/2-90),mk(0,'o',330,H/2+90),
+           mk(1,'gk',R-24,H/2),mk(1,'o',W-330,H/2-90),mk(1,'o',W-330,H/2+90)];
+}
+function startGame(m,title){
+  mode=m;score=[0,0];time=90;reset();state='wait';lastW=0;srvTitle=title||'';
+  $('l0').textContent=m=='solo'?'You':m=='local'?'P1':'Yellow';$('l1').textContent=m=='solo'?'CPU':m=='local'?'P2':'Blue';
+  $('hint').textContent=m=='local'?'P1: WASD + Space (yellow). P2: arrows + Enter (blue). Hold Shift to sprint.':'Move with WASD or arrows, Space to kick, hold Shift to sprint. On touch, drag to move and use Sprint/Kick.';
+  $('kick').classList.toggle('hide',!matchMedia('(pointer:coarse)').matches);
+  $('sprint').classList.toggle('hide',!matchMedia('(pointer:coarse)').matches);
+  hud();setOv(0);show('v-game');
+}
+let srvTitle='';
+function fmt(t){t=Math.max(0,Math.ceil(t));return Math.floor(t/60)+':'+String(t%60).padStart(2,'0')}
+function hud(){$('s0').textContent=score[0];$('s1').textContent=score[1];$('clock').textContent=fmt(time)}
+function setOv(m){
+  const ov=$('ov'),h=$('ovh'),p=$('ovp'),b=$('go'),cl=mode=='client';
+  ov.classList.toggle('hide',m==1);ov.style.background=m==2?'rgba(8,18,11,.4)':'rgba(8,18,11,.65)';
+  if(m==0){h.textContent=srvTitle||'Pitch Side Soccer';p.textContent=cl?'Waiting for the host to kick off…':mode=='host'?'Up to 4 players. Others join from the server list. Start when everyone is in.':mode=='local'?'Two players, one keyboard.':'3 v 3, 90 seconds. Beat the blue team.';b.textContent='Kick off';b.classList.toggle('hide',cl)}
+  if(m==2){h.textContent='Goal! '+(lastW?'Blue':'Yellow')+' scores';p.textContent=score[0]+' – '+score[1];b.classList.add('hide')}
+  if(m==3){h.textContent=score[0]>score[1]?(mode=='solo'?'You win!':'Yellow wins'):score[0]<score[1]?(mode=='solo'?'Blue wins':'Blue wins'):'Draw';p.textContent='Full time: '+score[0]+' – '+score[1];b.textContent='Play again';b.classList.toggle('hide',cl)}
+}
+$('go').onclick=()=>{if(mode=='client')return;score=[0,0];time=90;reset();state='play';hud();setOv(1)};
+
+/* ---------- input ---------- */
+addEventListener('keydown',e=>{if(e.target.tagName=='INPUT')return;const k=e.key.length==1?e.key.toLowerCase():e.key;keys[k]=true;
+  if([' ','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)&&!$('v-game').classList.contains('hide'))e.preventDefault();
+  if(e.key=='Enter'&&(state=='wait'||state=='end')&&mode!='client'&&!$('v-game').classList.contains('hide'))$('go').click()});
+addEventListener('keyup',e=>{keys[e.key.length==1?e.key.toLowerCase():e.key]=false});
+addEventListener('blur',()=>{keys={}});
+let jid=null,jo=null;
+$('sprint').addEventListener('pointerdown',e=>{sprintBtn=true;e.stopPropagation()});
+addEventListener('pointerup',()=>{sprintBtn=false});
+$('kick').addEventListener('pointerdown',e=>{kickBtn=true;e.stopPropagation()});
+addEventListener('pointerup',()=>{kickBtn=false});
+cv.addEventListener('pointerdown',e=>{if(e.pointerType=='mouse')return;const r=cv.getBoundingClientRect();if(e.clientX-r.left<r.width*.6){jid=e.pointerId;jo={x:e.clientX,y:e.clientY};cv.setPointerCapture(jid)}});
+cv.addEventListener('pointermove',e=>{if(e.pointerId!==jid)return;joy.x=clamp((e.clientX-jo.x)/45,-1,1);joy.y=clamp((e.clientY-jo.y)/45,-1,1)});
+const endJoy=e=>{if(e.pointerId===jid){jid=null;joy={x:0,y:0}}};
+cv.addEventListener('pointerup',endJoy);cv.addEventListener('pointercancel',endJoy);
+const norm=(x,y)=>{const m=Math.hypot(x,y);return m>1?[x/m,y/m]:[x,y]};
+function kbMerged(){const[x,y]=norm((keys.d?1:0)-(keys.a?1:0)+(keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0)+joy.x,(keys.s?1:0)-(keys.w?1:0)+(keys.ArrowDown?1:0)-(keys.ArrowUp?1:0)+joy.y);return{ix:x,iy:y,k:!!(keys[' ']||kickBtn),s:!!(keys.Shift||sprintBtn)}}
+function kbWasd(){const[x,y]=norm((keys.d?1:0)-(keys.a?1:0)+joy.x,(keys.s?1:0)-(keys.w?1:0)+joy.y);return{ix:x,iy:y,k:!!(keys[' ']||kickBtn),s:!!(keys.Shift||sprintBtn)}}
+function kbArrows(){const[x,y]=norm((keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0),(keys.ArrowDown?1:0)-(keys.ArrowUp?1:0));return{ix:x,iy:y,k:!!keys.Enter,s:!!keys.Shift}}
+function near(t){let b=1e9,r=-1;for(const i of t?[4,5]:[1,2]){const d=dist(players[i],ball);if(d<b){b=d;r=i}}return r}
+function myPeer(){const p=activeRoom&&activeRoom.peers().find(q=>q.sameTab);return p?p.peer:''}
+function manageSlots(){
+  const ps=activeRoom.peers().filter(p=>p.kind=='viewer'&&p.presence&&p.presence.n!=null).sort((a,b)=>(b.sameTab|0)-(a.sameTab|0));
+  const order=[1,4,2,5];
+  for(const i of order)if(slotPeer[i]&&!ps.some(p=>p.peer==slotPeer[i]))slotPeer[i]='';
+  for(const p of ps)if(!slotPeer.includes(p.peer)){const f=order.find(i=>!slotPeer[i]);if(f!=null)slotPeer[f]=p.peer}
+}
+function getInputs(){
+  const inp=Array(6).fill(null);
+  if(mode=='solo')inp[near(0)]=kbMerged();
+  else if(mode=='local'){inp[near(0)]=kbWasd();inp[near(1)]=kbArrows()}
+  else{const me=myPeer(),ps=activeRoom?activeRoom.peers():[];
+    for(const i of[1,4,2,5]){const id=slotPeer[i];if(!id)continue;
+      if(id==me)inp[i]=kbMerged();else{const p=ps.find(q=>q.peer==id);if(p)inp[i]={ix:+p.presence.ix||0,iy:+p.presence.iy||0,k:!!p.presence.k,s:!!p.presence.s}}}}
+  return inp;
+}
+function owners(){
+  const o=Array(6).fill(null);
+  if(mode=='solo')o[near(0)]={n:prof.name,c:prof.color,s:prof.skin,me:1};
+  else if(mode=='local'){o[near(0)]={n:prof.name,c:prof.color,s:prof.skin,me:1};o[near(1)]={n:'P2',me:1}}
+  else{const own=mode=='host'?slotPeer:(cs?cs.o:[]),ps=activeRoom?activeRoom.peers():[];
+    own.forEach((id,i)=>{if(!id)return;const p=ps.find(q=>q.peer==id);if(p)o[i]={n:p.presence.n||'Player',c:p.presence.c,s:p.presence.s,me:p.sameTab}})}
+  return o;
+}
+
+/* ---------- simulation ---------- */
+function aimGoal(p,rand){const gx=p.team?L:R,gy=rand?G1+15+Math.random()*(G2-G1-30):H/2,dx=gx-p.x,dy=gy-p.y,m=Math.hypot(dx,dy)||1;return[dx/m,dy/m]}
+function stepSim(){
+  tick++;const inp=getInputs();
+  const chase=[-1,-1];
+  for(const t of[0,1]){const os=t?[4,5]:[1,2];if(os.some(i=>inp[i]&&dist(players[i],ball)<140))continue;
+    let b=1e9;for(const i of os)if(!inp[i]){const d=dist(players[i],ball);if(d<b){b=d;chase[t]=i}}}
+  players.forEach((p,i)=>{
+    let tx=0,ty=0,sp=2.6,kick=false,aim=[p.fx,p.fy];const c=inp[i];
+    if(c){tx=c.ix;ty=c.iy;sp=c.s?4.8:3.3;kick=c.k}
+    else if(p.role=='gk'){
+      const gy=clamp(ball.y,G1+6,G2-6);tx=clamp((p.hx-p.x)/15,-1,1);ty=clamp((gy-p.y)/15,-1,1);sp=2.3;
+      if(dist(p,ball)<30){kick=true;aim=[p.team?-1:1,(ball.y<H/2?1:-1)*.6]}
+    }else if(chase[p.team]==i){
+      const gd=aimGoal({team:p.team,x:ball.x,y:ball.y},false),d=dist(p,ball);
+      const px=d>40?ball.x-gd[0]*20:ball.x+gd[0]*30,py=d>40?ball.y-gd[1]*20:ball.y+gd[1]*30;
+      const dx=px-p.x,dy=py-p.y,m=Math.hypot(dx,dy)||1;tx=dx/m;ty=dy/m;sp=2.7;
+      if(d<26&&Math.abs((p.team?L:R)-p.x)<430&&Math.random()<.08){kick=true;aim=aimGoal(p,true)}
+    }else{
+      const hx=p.hx+(ball.x-W/2)*.25,hy=p.hy+(ball.y-H/2)*.3,dx=hx-p.x,dy=hy-p.y,m=Math.hypot(dx,dy);
+      if(m>6){tx=dx/m;ty=dy/m}sp=2.2;
+      if(dist(p,ball)<24&&Math.random()<.05){kick=true;aim=aimGoal(p,true)}
+    }
+    p.vx+=(tx*sp-p.vx)*.2;p.vy+=(ty*sp-p.vy)*.2;
+    p.x=clamp(p.x+p.vx,L+PR*.6,R-PR*.6);p.y=clamp(p.y+p.vy,T+PR,B-PR);
+    const sm=Math.hypot(p.vx,p.vy);if(sm>.5){p.fx=p.vx/sm;p.fy=p.vy/sm}
+    if(p.cd>0)p.cd--;
+    if(kick&&p.cd<=0&&dist(p,ball)<PR+BR+9){const am=Math.hypot(aim[0],aim[1])||1;ball.vx=aim[0]/am*11.5;ball.vy=aim[1]/am*11.5;p.cd=22}
+  });
+  for(let i=0;i<6;i++)for(let j=i+1;j<6;j++){const a=players[i],b=players[j],d=dist(a,b);
+    if(d<PR*2&&d>0){const o=(PR*2-d)/2,nx=(b.x-a.x)/d,ny=(b.y-a.y)/d;a.x-=nx*o;a.y-=ny*o;b.x+=nx*o;b.y+=ny*o}}
+  for(const p of players){const d=dist(p,ball),rr=PR+BR;
+    if(d<rr){const nx=(ball.x-p.x)/(d||1),ny=(ball.y-p.y)/(d||1);ball.x=p.x+nx*rr;ball.y=p.y+ny*rr;
+      const rel=(ball.vx-p.vx)*nx+(ball.vy-p.vy)*ny;if(rel<0){ball.vx-=rel*nx*1.35;ball.vy-=rel*ny*1.35}
+      ball.vx+=p.vx*.18;ball.vy+=p.vy*.18}}
+  moveBall();
+}
+function moveBall(){
+  ball.x+=ball.vx;ball.y+=ball.vy;ball.vx*=.987;ball.vy*=.987;
+  if(Math.hypot(ball.vx,ball.vy)<.03){ball.vx=ball.vy=0}
+  if(ball.y<T+BR){ball.y=T+BR;ball.vy=Math.abs(ball.vy)*.8}
+  if(ball.y>B-BR){ball.y=B-BR;ball.vy=-Math.abs(ball.vy)*.8}
+  const mouth=ball.y>G1+4&&ball.y<G2-4;
+  if(state=='play'){
+    if(ball.x<L+BR&&!mouth){ball.x=L+BR;ball.vx=Math.abs(ball.vx)*.75}
+    if(ball.x>R-BR&&!mouth){ball.x=R-BR;ball.vx=-Math.abs(ball.vx)*.75}
+    if(ball.x<L-BR||ball.x>R+BR){const t=ball.x>R?0:1;score[t]++;lastW=t;state='goal';pause=100;hud();setOv(2)}
+  }else{ball.vx*=.9;ball.vy*=.9;ball.x=clamp(ball.x,L-30,R+30);ball.y=clamp(ball.y,G1+BR,G2-BR)}
+}
+const r1=v=>Math.round(v*10)/10;
+function broadcast(m){
+  if(!activeRoom)return;
+  activeRoom.emit('st',{b:[r1(ball.x),r1(ball.y)],p:players.map(p=>[r1(p.x),r1(p.y),r1(p.fx),r1(p.fy)]),s:score,t:Math.ceil(time),m,w:lastW,o:slotPeer}).catch(()=>{});
+}
+function applySt(d){
+  cs=d;if(!disp){disp=d.p.map(a=>({x:a[0],y:a[1],fx:a[2],fy:a[3]}));dball={x:d.b[0],y:d.b[1]}}
+  score=d.s;time=d.t;lastW=d.w;hud();if(d.m!==curM){curM=d.m;state=['wait','play','goal','end'][d.m];setOv(d.m)}
+}
+
+/* ---------- drawing ---------- */
+function drawPlayer(c,x,y,fx,fy,team,role,o,active,k=1){
+  const tc=team?'#2f6bff':'#ffd23f',r=PR*k;
+  c.fillStyle='rgba(0,0,0,.25)';c.beginPath();c.ellipse(x+2,y+r*.7,r,r*.6,0,0,7);c.fill();
+  c.fillStyle='#0d1f14';c.beginPath();c.arc(x,y,r+2,0,7);c.fill();
+  c.fillStyle=o&&o.c?o.c:team?(role=='gk'?'#1fc8b4':'#2f6bff'):(role=='gk'?'#ff7a3d':'#ffd23f');
+  c.beginPath();c.arc(x,y,r,0,7);c.fill();
+  const img=o&&getImg(o.s);
+  if(img){c.save();c.beginPath();c.arc(x,y,r-2,0,7);c.clip();c.drawImage(img,x-r,y-r,r*2,r*2);c.restore()}
+  else{c.fillStyle='#0d1f14';c.beginPath();c.arc(x+fx*8*k,y+fy*8*k,3.5*k,0,7);c.fill()}
+  if(o){c.strokeStyle=tc;c.lineWidth=3;c.beginPath();c.arc(x,y,r-1,0,7);c.stroke()}
+  if(active){c.strokeStyle='#fff';c.lineWidth=2.5;c.setLineDash([5,4]);c.beginPath();c.arc(x,y,r+6+Math.sin(tick/8)*1.5,0,7);c.stroke();c.setLineDash([])}
+  if(o&&o.n&&k==1){c.font='800 15px "Barlow Condensed",Arial,sans-serif';c.textAlign='center';c.lineWidth=4;c.strokeStyle='rgba(0,0,0,.7)';c.strokeText(o.n,x,y-r-9);c.fillStyle='#fff';c.fillText(o.n,x,y-r-9)}
+}
+function draw(){
+  if(!ball&&!dball)return;
+  for(let i=0;i<10;i++){ctx.fillStyle=i%2?'#2f8f4a':'#379c52';ctx.fillRect(i*W/10,0,W/10,H)}
+  ctx.strokeStyle='rgba(255,255,255,.85)';ctx.lineWidth=3;ctx.strokeRect(L,T,R-L,B-T);
+  ctx.beginPath();ctx.moveTo(W/2,T);ctx.lineTo(W/2,B);ctx.stroke();
+  ctx.beginPath();ctx.arc(W/2,H/2,58,0,7);ctx.stroke();ctx.strokeRect(L,150,90,240);ctx.strokeRect(R-90,150,90,240);
+  ctx.fillStyle='rgba(255,255,255,.18)';ctx.fillRect(L-30,G1,30,G2-G1);ctx.fillRect(R,G1,30,G2-G1);
+  ctx.strokeStyle='#fff';ctx.lineWidth=5;ctx.strokeRect(L-30,G1,30,G2-G1);ctx.strokeRect(R,G1,30,G2-G1);
+  const cl=mode=='client',vis=cl?(disp||[]).map((d,i)=>({...d,team:i<3?0:1,role:i%3?'o':'gk'})):players,b=cl?dball:ball,o=owners();
+  if(!b)return;
+  ctx.fillStyle='rgba(0,0,0,.25)';ctx.beginPath();ctx.ellipse(b.x+2,b.y+5,BR,BR*.6,0,0,7);ctx.fill();
+  vis.forEach((p,i)=>drawPlayer(ctx,p.x,p.y,p.fx,p.fy,p.team,p.role,o[i],!!(o[i]&&o[i].me)&&state=='play'));
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,BR,0,7);ctx.fill();
+  ctx.strokeStyle='#222';ctx.lineWidth=2;ctx.stroke();ctx.fillStyle='#222';ctx.beginPath();ctx.arc(b.x,b.y,2.6,0,7);ctx.fill();
+}
+
+/* ---------- main loop ---------- */
+let last=performance.now(),acc=0;
+function loop(now){
+  acc+=Math.min(100,now-last);last=now;
+  while(acc>=1000/60){
+    acc-=1000/60;
+    if($('v-game').classList.contains('hide'))continue;
+    if(mode=='client'){
+      tick++;
+      if(disp&&cs){cs.p.forEach((a,i)=>{const d=disp[i];d.x+=(a[0]-d.x)*.4;d.y+=(a[1]-d.y)*.4;d.fx=a[2];d.fy=a[3]});dball.x+=(cs.b[0]-dball.x)*.5;dball.y+=(cs.b[1]-dball.y)*.5}
+      const k=kbMerged(),s=[k.ix.toFixed(1),k.iy.toFixed(1),k.k?1:0,k.s?1:0].join();
+      if(s!==sentIn&&activeRoom){sentIn=s;activeRoom.presence({ix:+k.ix.toFixed(1),iy:+k.iy.toFixed(1),k:k.k?1:0,s:k.s?1:0}).catch(()=>{})}
+      if(tick%60==0){hostMiss=activeRoom&&activeRoom.peers().some(p=>p.presence&&p.presence.host)?0:hostMiss+1;if(hostMiss>4){alert('The host left the server.');leave()}}
+      continue;
+    }
+    if(mode=='host'&&activeRoom&&tick%20==0)manageSlots();
+    if(state=='play'){stepSim();time-=1/60;if(Math.floor(time*60)%10==0)hud();if(time<=0){time=0;hud();state='end';setOv(3)}}
+    else if(state=='goal'){tick++;moveBall();if(--pause<=0){reset();state='play';setOv(1)}}
+    else if(state=='wait'||state=='end')tick++;
+    if(mode=='host'&&tick%3==0)broadcast(state=='wait'?0:state=='play'?1:state=='goal'?2:3);
+  }
+  draw();requestAnimationFrame(loop);
+}
+show('v-menu');preview();boot();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
