@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
 <style>
 :root{--bg:#e7eee3;--fg:#13261a;--card:#fbfdf9;--line:#c5d2bf;--btn:#13261a;--btnfg:#fbfdf9;--acc:#2f8f4a;
 box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -92,7 +93,6 @@ canvas#c{width:100%;height:100%;display:block}
   <div id="sl"></div>
   <div class="card" style="width:100%;display:flex;flex-direction:column;gap:10px;max-width:none">
     <label>Server name<input type="text" id="sn" maxlength="24" placeholder="My server" autocomplete="off"></label>
-    <label>Password (leave empty for a public server)<input type="password" id="sp" maxlength="32" autocomplete="new-password"></label>
     <button id="mk">Create server</button>
   </div>
   <div id="msg"></div>
@@ -126,6 +126,8 @@ let prof={name:'',color:'#ffd23f',skin:''};
 let mode='solo',state='menu',pause=0,score=[0,0],time=90,lastW=0,tick=0;
 let ball,players,slotPeer=['','','','','',''],cs=null,disp=null,dball=null,curM=-1,hostMiss=0;
 let keys={},joy={x:0,y:0},kickBtn=false,sprintBtn=false,unSrv=null,srvDocs=[],pendingSrv=null,hb=null,sentIn='';
+const SERVER_URL='https://pssserver.onrender.com';
+let socket=null,roomList=[],currentRoom=null,roomPlayers=[],onlineInputs=Array(6).fill(null),mySlot=-1,isOnlineHost=false,matchFinishSent=false;
 
 /* ---------- helpers ---------- */
 function show(id){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('hide',v.id!=id))}
@@ -151,6 +153,7 @@ function updateAuthUI(){
     : 'Sign in with Google to use online servers.';
 }
 async function boot(){
+  initSocket();
   try{
     if(window.firebase && firebaseConfig.apiKey!=='YOUR_API_KEY'){
       if(!firebase.apps.length)firebase.initializeApp(firebaseConfig);
@@ -159,6 +162,7 @@ async function boot(){
         googleUser=u;user=u;uid=u?u.uid:null;
         if(u && !prof.name)prof.name=(u.displayName||'Player').slice(0,16);
         $('un').value=prof.name;updateAuthUI();preview();
+        authenticateSocket();
       });
     }else{
       $('authstatus').textContent='Setup needed: add your Firebase config in the code.';
@@ -176,8 +180,8 @@ $('google-login').onclick=async()=>{
 $('google-logout').onclick=async()=>{if(auth)try{await auth.signOut()}catch(e){}};
 
 async function saveProf(){
-  try{if(db&&uid)await db.doc('data/users/'+uid+'/profile').set(prof)}catch(e){}
   try{localStorage.setItem('psprof',JSON.stringify(prof))}catch(e){}
+  if(socket&&socket.connected&&googleUser)socket.emit('profile:name',{name:prof.name},()=>{});
 }
 const COLORS=['#ffd23f','#2f6bff','#ff5a5f','#2ec4b6','#ff9f1c','#9b5de5','#f15bb5','#ffffff'];
 COLORS.forEach(c=>{const b=document.createElement('button');b.className='sw';b.style.background=c;b.setAttribute('aria-label','Colour '+c);b.onclick=()=>{prof.color=c;preview();persist()};$('sw').appendChild(b)});
@@ -207,76 +211,89 @@ $('file').onchange=e=>{loadSkin(e.target.files[0]);e.target.value=''};
 ['dragover','drop'].forEach(t=>$('pv').addEventListener(t,e=>{e.preventDefault();if(t=='drop')loadSkin(e.dataTransfer.files[0])}));
 $('clr').onclick=()=>{prof.skin='';preview();persist();$('pmsg').textContent='Model removed.'};
 
-/* ---------- servers ---------- */
+/* ---------- Socket.IO online servers ---------- */
 function requireGoogleLogin(){
   if(googleUser)return true;
   alert(auth ? 'Please sign in with Google before playing.' : 'Google login is not configured yet. Finish the Firebase setup first.');
   return false;
 }
+function initSocket(){
+  if(socket)return;
+  socket=io(SERVER_URL,{transports:['websocket','polling']});
+  socket.on('connect',()=>{if(googleUser)authenticateSocket();if($('v-servers')&&!$('v-servers').classList.contains('hide'))msg('Connected to game server.');});
+  socket.on('connect_error',e=>{if($('v-servers')&&!$('v-servers').classList.contains('hide'))msg('Server connection failed: '+(e.message||'try again'));});
+  socket.on('rooms:list',rooms=>{roomList=Array.isArray(rooms)?rooms:[];renderSrv();});
+  socket.on('room:update',room=>{if(currentRoom&&room&&room.id===currentRoom.id){currentRoom=room;roomPlayers=room.players||[];}roomList=roomList.map(r=>r.id===room.id?room:r);if(!roomList.some(r=>r.id===room.id)&&room.players&&room.players.length)roomList.push(room);renderSrv();});
+  socket.on('room:joined',()=>{}); // The join acknowledgement handles the UI transition.
+  socket.on('room:input',p=>{if(mode==='host'&&isOnlineHost&&p&&Number.isInteger(p.slot))onlineInputs[p.slot]=p.input||null;});
+  socket.on('match:started',p=>{
+    if(!currentRoom||!p||!p.room||p.room.id!==currentRoom.id)return;
+    currentRoom=p.room;roomPlayers=p.room.players||[];mode=isOnlineHost?'host':'client';
+    startGame(mode,currentRoom.name);state='play';time=90;score=[0,0];reset();matchFinishSent=false;setOv(1);hud();
+  });
+  socket.on('game:state',d=>{if(mode==='client'&&d)applySt(d);});
+  socket.on('match:finished',p=>{if(!currentRoom)return;if(p&&Array.isArray(p.score))score=p.score;state='end';time=0;hud();setOv(3);});
+  socket.on('room:closed',p=>{if(currentRoom){roomList=roomList.filter(r=>r.id!==currentRoom.id);msg((p&&p.message)||'Room closed.');currentRoom=null;roomPlayers=[];mySlot=-1;isOnlineHost=false;if(!$('v-game').classList.contains('hide')){state='menu';show('v-servers');}renderSrv();}});
+}
+async function authenticateSocket(){
+  if(!socket||!auth||!googleUser)return {ok:false,error:'Sign in with Google first.'};
+  try{
+    const idToken=await googleUser.getIdToken();
+    return await new Promise(resolve=>socket.emit('auth',{idToken},result=>{
+      if(result&&result.ok){
+        $('authstatus').textContent='Signed in as '+(googleUser.displayName||googleUser.email||'Google user')+' · game server connected';
+        socket.emit('profile:name',{name:prof.name||googleUser.displayName||'Player'},()=>{});
+      }else{$('authstatus').textContent='Google sign-in works, but server authentication failed: '+((result&&result.error)||'unknown error');}
+      resolve(result||{ok:false,error:'No authentication response.'});
+    }));
+  }catch(e){$('authstatus').textContent='Could not authenticate with game server: '+(e.message||'try again');return {ok:false,error:e.message||'Authentication failed.'};}
+}
 $('m-solo').onclick=()=>{if(!requireGoogleLogin())return;commitName();saveProf();startGame('solo')};
 $('m-local').onclick=()=>{if(!requireGoogleLogin())return;commitName();saveProf();startGame('local')};
 $('m-online').onclick=()=>{if(!requireGoogleLogin())return;commitName();saveProf();openServers()};
-$('sb').onclick=()=>{if(unSrv){unSrv();unSrv=null}show('v-menu')};
+$('sb').onclick=()=>{show('v-menu')};
 function msg(t){$('msg').textContent=t||''}
-function openServers(){
-  show('v-servers');msg(googleUser?'Online server backend is not configured in this standalone HTML.':'Sign in with Google first to use online servers.');
-  if(!googleUser||!db)return;
-  if(unSrv)unSrv();
-  unSrv=db.collection('servers').onSnapshot(s=>{srvDocs=s.docs.map(d=>({id:d.id,...d.data()}));renderSrv()},e=>msg('Could not load servers.'));
-}
-setInterval(()=>{if(!$('v-servers').classList.contains('hide')&&!pendingSrv)renderSrv()},10000);
+function openServers(){show('v-servers');renderSrv();msg(socket&&socket.connected?'Connected. Create a room or join one below.':'Connecting to game server…');if(!socket) initSocket();if(googleUser)authenticateSocket();}
 function renderSrv(){
-  const keep=$('jp')?$('jp').value:'';const sl=$('sl');sl.textContent='';const live=srvDocs.filter(s=>Date.now()-(s.seen||0)<90000);
-  if(!live.length){const p=document.createElement('div');p.className='muted';p.style.textAlign='center';p.textContent='No servers yet. Create the first one below.';sl.appendChild(p)}
-  for(const s of live){
-    const r=document.createElement('div');r.className='srv';
-    const n=document.createElement('b');n.textContent=s.name||'Server';
-    const m=document.createElement('span');m.className='muted';m.textContent=(s.lock?'Locked · ':'')+(s.n||1)+'/4';
-    const j=document.createElement('button');j.textContent='Join';j.onclick=()=>joinSrv(s);
-    r.append(n,m,j);sl.appendChild(r);
-    if(pendingSrv==s.id){const f=document.createElement('div');f.className='row';f.style.flex='1 0 100%';
-      const i=document.createElement('input');i.type='password';i.placeholder='Server password';i.id='jp';i.style.flex='1';i.value=keep;
-      const g=document.createElement('button');g.textContent='Enter';g.onclick=()=>joinSrv(s,i.value);
-      i.onkeydown=e=>{if(e.key=='Enter')g.click()};f.append(i,g);r.style.flexWrap='wrap';r.appendChild(f);setTimeout(()=>i.focus(),0)}
+  const sl=$('sl');if(!sl)return;sl.textContent='';
+  const available=roomList.filter(r=>r.players&&r.players.length&&!r.started);
+  if(!available.length){const p=document.createElement('div');p.className='muted';p.style.textAlign='center';p.textContent='No open rooms yet. Create one below.';sl.appendChild(p)}
+  for(const room of available){
+    const row=document.createElement('div');row.className='srv';
+    const n=document.createElement('b');n.textContent=room.name||'Soccer room';
+    const meta=document.createElement('span');meta.className='muted';meta.textContent=(room.players.length||0)+'/'+(room.maxPlayers||4)+' players · '+room.id;
+    const join=document.createElement('button');join.textContent='Join';join.disabled=room.players.length>=(room.maxPlayers||4);join.onclick=()=>joinRoom(room.id);
+    row.append(n,meta,join);sl.appendChild(row);
   }
 }
-async function joinSrv(s,pw){
-  commitName();msg('');
-  if(!googleUser){msg('Sign in with Google before joining online servers.');return}
-  if(!room){msg('Online room backend is not configured in this standalone HTML.');return}
-  if(s.lock&&pw===undefined){pendingSrv=s.id;renderSrv();return}
-  const rk=s.lock?'g'+(await sha('r:'+s.id+':'+pw)).slice(0,40):'g'+s.id;
-  if(s.lock&&(await sha('v:'+s.id+':'+pw))!==s.v){msg('Wrong password.');return}
-  pendingSrv=null;enterRoom(rk,false,s);
+function emitAck(event,payload){return new Promise(resolve=>{if(!socket||!socket.connected)return resolve({ok:false,error:'Not connected to the game server.'});socket.emit(event,payload||{},resolve);});}
+async function joinRoom(roomId){
+  if(!googleUser){msg('Sign in with Google first.');return;}
+  commitName();await authenticateSocket();msg('Joining room…');
+  const result=await emitAck('rooms:join',{roomId,name:prof.name,color:prof.color});
+  if(!result||!result.ok){msg((result&&result.error)||'Could not join room.');return;}
+  currentRoom=result.room;roomPlayers=result.room.players||[];mySlot=result.slot;isOnlineHost=!!result.isHost;mode=isOnlineHost?'host':'client';onlineInputs=Array(6).fill(null);matchFinishSent=false;
+  msg('');startGame(mode,currentRoom.name);state='wait';setOv(0);renderSrv();
 }
 $('mk').onclick=async()=>{
-  commitName();msg('');if(!googleUser){msg('Sign in with Google before creating a server.');return}if(!room||!db){msg('Online room backend is not configured in this standalone HTML.');return}
-  const name=($('sn').value||'').trim()||prof.name+"’s server",pw=$('sp').value,id=rid();
-  const rk=pw?'g'+(await sha('r:'+id+':'+pw)).slice(0,40):'g'+id;
-  try{await db.doc('servers/'+id).set({name,lock:!!pw,v:pw?await sha('v:'+id+':'+pw):'',host:uid||'',seen:Date.now(),n:1})}
-  catch(e){msg('You need Contributor access to create servers.');return}
-  $('sp').value='';enterRoom(rk,true,{id,name});
+  if(!googleUser){msg('Sign in with Google before creating a room.');return;}
+  if(!socket||!socket.connected){msg('Waiting for the game server connection. Try again in a moment.');return;}
+  commitName();await authenticateSocket();
+  const name=($('sn').value||'').trim()||prof.name+'’s room';
+  msg('Creating room…');
+  const made=await emitAck('rooms:create',{name,roomId:rid()});
+  if(!made||!made.ok){msg((made&&made.error)||'Could not create room.');return;}
+  await joinRoom(made.roomId);
 };
-async function enterRoom(rk,isHost,s){
-  msg('Joining…');
-  try{
-    activeRoom=await room.join(rk);srvId=s.id;
-    await activeRoom.presence({n:prof.name,c:prof.color,s:prof.skin,host:isHost?1:0,ix:0,iy:0,k:0});
-  }catch(e){activeRoom=null;msg('Could not join: '+((e&&(e.code||e.message))||'unknown error')+'. Try again.');return}
-  msg('');
-  if(unSrv){unSrv();unSrv=null}
-  if(!isHost)activeRoom.on('st',m=>{const p=activeRoom.peers().find(q=>q.peer==m.peer);if(p&&p.presence.host&&m.data)applySt(m.data)});
-  slotPeer=['','','','','',''];cs=null;disp=null;curM=-1;hostMiss=0;
-  startGame(isHost?'host':'client',s.name);
-  if(isHost)hb=setInterval(async()=>{try{await db.doc('servers/'+srvId).update({seen:Date.now(),n:Math.min(4,slotPeer.filter(Boolean).length||1)})}catch(e){}},25000);
-}
 async function leave(){
-  clearInterval(hb);hb=null;
-  if(mode=='host'&&db&&srvId){try{await db.doc('servers/'+srvId).delete()}catch(e){}}
-  if(activeRoom){try{await activeRoom.leave()}catch(e){}activeRoom=null}
-  state='menu';show('v-menu');
+  if(socket&&socket.connected&&currentRoom)await emitAck('rooms:leave',{});
+  currentRoom=null;roomPlayers=[];mySlot=-1;isOnlineHost=false;onlineInputs=Array(6).fill(null);state='menu';show('v-menu');
 }
 $('leave').onclick=leave;
+function finishOnlineMatch(){
+  if(matchFinishSent||!isOnlineHost||!socket||!currentRoom)return;matchFinishSent=true;
+  socket.emit('match:finish',{score},result=>{if(!result||!result.ok)console.warn('Could not save match result:',result&&result.error);});
+}
 
 /* ---------- game setup ---------- */
 function mk(team,role,x,y){return{team,role,x,y,hx:x,hy:y,vx:0,vy:0,fx:team?-1:1,fy:0,cd:0}}
@@ -299,11 +316,11 @@ function hud(){$('s0').textContent=score[0];$('s1').textContent=score[1];$('cloc
 function setOv(m){
   const ov=$('ov'),h=$('ovh'),p=$('ovp'),b=$('go'),cl=mode=='client';
   ov.classList.toggle('hide',m==1);ov.style.background=m==2?'rgba(8,18,11,.4)':'rgba(8,18,11,.65)';
-  if(m==0){h.textContent=srvTitle||'Pitch Side Soccer';p.textContent=cl?'Waiting for the host to kick off…':mode=='host'?'Up to 4 players. Others join from the server list. Start when everyone is in.':mode=='local'?'Two players, one keyboard.':'3 v 3, 90 seconds. Beat the blue team.';b.textContent='Kick off';b.classList.toggle('hide',cl)}
+  if(m==0){h.textContent=srvTitle||'Pitch Side Soccer';p.textContent=cl?'Waiting for the host to kick off…':mode=='host'?'Up to 4 players. At least 2 players are required. The host starts the match.':mode=='local'?'Two players, one keyboard.':'3 v 3, 90 seconds. Beat the blue team.';b.textContent='Kick off';b.classList.toggle('hide',cl)}
   if(m==2){h.textContent='Goal! '+(lastW?'Blue':'Yellow')+' scores';p.textContent=score[0]+' – '+score[1];b.classList.add('hide')}
   if(m==3){h.textContent=score[0]>score[1]?(mode=='solo'?'You win!':'Yellow wins'):score[0]<score[1]?(mode=='solo'?'Blue wins':'Blue wins'):'Draw';p.textContent='Full time: '+score[0]+' – '+score[1];b.textContent='Play again';b.classList.toggle('hide',cl)}
 }
-$('go').onclick=()=>{if(mode=='client')return;score=[0,0];time=90;reset();state='play';hud();setOv(1)};
+$('go').onclick=()=>{if(mode==='client')return;if(mode==='host'&&currentRoom){msg('');socket.emit('match:start',result=>{if(!result||!result.ok)msg((result&&result.error)||'Could not start match.');});return;}score=[0,0];time=90;reset();state='play';hud();setOv(1)};
 
 /* ---------- input ---------- */
 addEventListener('keydown',e=>{if(e.target.tagName=='INPUT')return;const k=e.key.length==1?e.key.toLowerCase():e.key;keys[k]=true;
@@ -325,28 +342,22 @@ function kbMerged(){const[x,y]=norm((keys.d?1:0)-(keys.a?1:0)+(keys.ArrowRight?1
 function kbWasd(){const[x,y]=norm((keys.d?1:0)-(keys.a?1:0)+joy.x,(keys.s?1:0)-(keys.w?1:0)+joy.y);return{ix:x,iy:y,k:!!(keys[' ']||kickBtn),s:!!(keys.Shift||sprintBtn)}}
 function kbArrows(){const[x,y]=norm((keys.ArrowRight?1:0)-(keys.ArrowLeft?1:0),(keys.ArrowDown?1:0)-(keys.ArrowUp?1:0));return{ix:x,iy:y,k:!!keys.Enter,s:!!keys.Shift}}
 function near(t){let b=1e9,r=-1;for(const i of t?[4,5]:[1,2]){const d=dist(players[i],ball);if(d<b){b=d;r=i}}return r}
-function myPeer(){const p=activeRoom&&activeRoom.peers().find(q=>q.sameTab);return p?p.peer:''}
-function manageSlots(){
-  const ps=activeRoom.peers().filter(p=>p.kind=='viewer'&&p.presence&&p.presence.n!=null).sort((a,b)=>(b.sameTab|0)-(a.sameTab|0));
-  const order=[1,4,2,5];
-  for(const i of order)if(slotPeer[i]&&!ps.some(p=>p.peer==slotPeer[i]))slotPeer[i]='';
-  for(const p of ps)if(!slotPeer.includes(p.peer)){const f=order.find(i=>!slotPeer[i]);if(f!=null)slotPeer[f]=p.peer}
-}
 function getInputs(){
   const inp=Array(6).fill(null);
-  if(mode=='solo')inp[near(0)]=kbMerged();
-  else if(mode=='local'){inp[near(0)]=kbWasd();inp[near(1)]=kbArrows()}
-  else{const me=myPeer(),ps=activeRoom?activeRoom.peers():[];
-    for(const i of[1,4,2,5]){const id=slotPeer[i];if(!id)continue;
-      if(id==me)inp[i]=kbMerged();else{const p=ps.find(q=>q.peer==id);if(p)inp[i]={ix:+p.presence.ix||0,iy:+p.presence.iy||0,k:!!p.presence.k,s:!!p.presence.s}}}}
+  if(mode==='solo')inp[near(0)]=kbMerged();
+  else if(mode==='local'){inp[near(0)]=kbWasd();inp[near(1)]=kbArrows()}
+  else if(mode==='host'){
+    for(const slot of [1,4,2,5])inp[slot]=onlineInputs[slot]||null;
+  }
   return inp;
 }
 function owners(){
   const o=Array(6).fill(null);
-  if(mode=='solo')o[near(0)]={n:prof.name,c:prof.color,s:prof.skin,me:1};
-  else if(mode=='local'){o[near(0)]={n:prof.name,c:prof.color,s:prof.skin,me:1};o[near(1)]={n:'P2',me:1}}
-  else{const own=mode=='host'?slotPeer:(cs?cs.o:[]),ps=activeRoom?activeRoom.peers():[];
-    own.forEach((id,i)=>{if(!id)return;const p=ps.find(q=>q.peer==id);if(p)o[i]={n:p.presence.n||'Player',c:p.presence.c,s:p.presence.s,me:p.sameTab}})}
+  if(mode==='solo')o[near(0)]={n:prof.name,c:prof.color,s:prof.skin,me:1};
+  else if(mode==='local'){o[near(0)]={n:prof.name,c:prof.color,s:prof.skin,me:1};o[near(1)]={n:'P2',me:1}}
+  else{
+    for(const p of (roomPlayers||[])){if(p.slot>=0&&p.slot<6)o[p.slot]={n:p.name||'Player',c:p.color,s:'',me:p.slot===mySlot};}
+  }
   return o;
 }
 
@@ -400,13 +411,17 @@ function moveBall(){
   }else{ball.vx*=.9;ball.vy*=.9;ball.x=clamp(ball.x,L-30,R+30);ball.y=clamp(ball.y,G1+BR,G2-BR)}
 }
 const r1=v=>Math.round(v*10)/10;
-function broadcast(m){
-  if(!activeRoom)return;
-  activeRoom.emit('st',{b:[r1(ball.x),r1(ball.y)],p:players.map(p=>[r1(p.x),r1(p.y),r1(p.fx),r1(p.fy)]),s:score,t:Math.ceil(time),m,w:lastW,o:slotPeer}).catch(()=>{});
+function broadcast(phase){
+  if(!socket||!currentRoom||!isOnlineHost)return;
+  socket.emit('game:state',{ball:[r1(ball.x),r1(ball.y)],players:players.map(p=>[r1(p.x),r1(p.y),r1(p.fx),r1(p.fy)]),score,time:Math.ceil(time),phase,lastW});
 }
 function applySt(d){
-  cs=d;if(!disp){disp=d.p.map(a=>({x:a[0],y:a[1],fx:a[2],fy:a[3]}));dball={x:d.b[0],y:d.b[1]}}
-  score=d.s;time=d.t;lastW=d.w;hud();if(d.m!==curM){curM=d.m;state=['wait','play','goal','end'][d.m];setOv(d.m)}
+  cs=d;
+  const arr=d.players||[];
+  if(!disp||disp.length!==arr.length){disp=arr.map(a=>({x:a[0],y:a[1],fx:a[2],fy:a[3]}));dball={x:d.ball[0],y:d.ball[1]};}
+  score=d.score||score;time=Number(d.time)||0;lastW=d.lastW||0;hud();
+  const phase=Number(d.phase)||0;
+  if(phase!==curM){curM=phase;state=['wait','play','goal','end'][phase]||'wait';setOv(phase);}
 }
 
 /* ---------- drawing ---------- */
@@ -440,31 +455,31 @@ function draw(){
 }
 
 /* ---------- main loop ---------- */
-let last=performance.now(),acc=0;
+let last=performance.now(),acc=0,netInputTick=0;
 function loop(now){
   acc+=Math.min(100,now-last);last=now;
   while(acc>=1000/60){
     acc-=1000/60;
     if($('v-game').classList.contains('hide'))continue;
-    if(mode=='client'){
+    if(mode==='client'){
       tick++;
-      if(disp&&cs){cs.p.forEach((a,i)=>{const d=disp[i];d.x+=(a[0]-d.x)*.4;d.y+=(a[1]-d.y)*.4;d.fx=a[2];d.fy=a[3]});dball.x+=(cs.b[0]-dball.x)*.5;dball.y+=(cs.b[1]-dball.y)*.5}
-      const k=kbMerged(),s=[k.ix.toFixed(1),k.iy.toFixed(1),k.k?1:0,k.s?1:0].join();
-      if(s!==sentIn&&activeRoom){sentIn=s;activeRoom.presence({ix:+k.ix.toFixed(1),iy:+k.iy.toFixed(1),k:k.k?1:0,s:k.s?1:0}).catch(()=>{})}
-      if(tick%60==0){hostMiss=activeRoom&&activeRoom.peers().some(p=>p.presence&&p.presence.host)?0:hostMiss+1;if(hostMiss>4){alert('The host left the server.');leave()}}
+      if(disp&&cs&&cs.players){cs.players.forEach((a,i)=>{const d=disp[i];if(!d)return;d.x+=(a[0]-d.x)*.4;d.y+=(a[1]-d.y)*.4;d.fx=a[2];d.fy=a[3];});if(dball&&cs.ball){dball.x+=(cs.ball[0]-dball.x)*.5;dball.y+=(cs.ball[1]-dball.y)*.5;}}
+      if(++netInputTick%2===0&&socket&&currentRoom&&state==='play'){const k=kbMerged();socket.emit('game:input',{input:{ix:+k.ix.toFixed(2),iy:+k.iy.toFixed(2),k:k.k,s:k.s}});}
       continue;
     }
-    if(mode=='host'&&activeRoom&&tick%20==0)manageSlots();
-    if(state=='play'){stepSim();time-=1/60;if(Math.floor(time*60)%10==0)hud();if(time<=0){time=0;hud();state='end';setOv(3)}}
-    else if(state=='goal'){tick++;moveBall();if(--pause<=0){reset();state='play';setOv(1)}}
-    else if(state=='wait'||state=='end')tick++;
-    if(mode=='host'&&tick%3==0)broadcast(state=='wait'?0:state=='play'?1:state=='goal'?2:3);
+    if(state==='play'){
+      if(mode==='host'&&currentRoom){const k=kbMerged();socket.emit('game:input',{input:{ix:+k.ix.toFixed(2),iy:+k.iy.toFixed(2),k:k.k,s:k.s}});}
+      stepSim();time-=1/60;if(Math.floor(time*60)%10===0)hud();
+      if(time<=0){time=0;hud();state='end';setOv(3);if(mode==='host')finishOnlineMatch();}
+    }else if(state==='goal'){
+      tick++;moveBall();if(--pause<=0){reset();state='play';setOv(1)}
+    }else if(state==='wait'||state==='end')tick++;
+    if(mode==='host'&&currentRoom&&tick%3===0)broadcast(state==='wait'?0:state==='play'?1:state==='goal'?2:3);
   }
   draw();requestAnimationFrame(loop);
 }
 show('v-menu');preview();boot();
 requestAnimationFrame(loop);
- <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script> 
 </script>
 </body>
 </html>
